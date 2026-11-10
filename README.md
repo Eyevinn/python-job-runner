@@ -14,6 +14,7 @@ by the OSC platform (cron trigger), not inside the container.
 | `GIT_TOKEN` / `GITHUB_TOKEN` | No | Personal access token for private repositories |
 | `CONFIG_SVC` | No | OSC config service name — exports its key/value pairs as env vars before the job runs |
 | `OSC_ACCESS_TOKEN` | No | OSC PAT required when `CONFIG_SVC` is set |
+| `OSC_REFRESH_TOKEN` | No | Set by the runner to the original `OSC_ACCESS_TOKEN` when `CONFIG_SVC` is set. Exchange it for a fresh 1h token by POSTing `{"token": os.environ["OSC_REFRESH_TOKEN"]}` to `https://token.svc.<env>.osaas.io/runner-token/refresh` and reading `.token`. A parameter store key with the same name overrides it. |
 | `OSC_ENV` | No | OSC environment (`prod`/`dev`); auto-detected from `OSC_MCP_URL` if unset |
 
 ## Entry point resolution

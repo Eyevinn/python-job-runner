@@ -76,18 +76,44 @@ if [ -n "${SUB_PATH:-}" ]; then
   cd "$WORK_DIR"
 fi
 
+# BEGIN CONFIG LOAD
 # Load environment variables from OSC config service if configured
 if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
   if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
     _extracted=$(echo "$OSC_MCP_URL" | sed -n 's|.*\.svc\.\([a-z]*\)\.osaas\.io.*|\1|p')
     OSC_ENV=${_extracted:-prod}
   fi
-  REFRESH_RESULT=$(curl -sf -X POST \
+  # Keep the original runner refresh token available to the job.
+  export OSC_REFRESH_TOKEN="${OSC_REFRESH_TOKEN:-$OSC_ACCESS_TOKEN}"
+  # Exchange the refresh token for a fresh 1h PAT. The fresh PAT is used only
+  # for the config load below; the job keeps its original OSC_ACCESS_TOKEN.
+  # Every step is guarded so that set -e can never end the container here.
+  FRESH_PAT=""
+  REFRESH_HTTP="000"
+  REFRESH_CODE=""
+  refresh_body_file=$(mktemp)
+  refresh_out_file=$(mktemp)
+  chmod 600 "$refresh_body_file" "$refresh_out_file"
+  printf '{"token":"%s"}' "$OSC_REFRESH_TOKEN" > "$refresh_body_file"
+  REFRESH_HTTP=$(curl -s --connect-timeout 5 --max-time 10 -X POST \
     "https://token.svc.${OSC_ENV:-prod}.osaas.io/runner-token/refresh" \
-    -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>&1) && \
-    OSC_ACCESS_TOKEN=$(echo "$REFRESH_RESULT" | jq -r '.token // empty') || true
+    -H "Content-Type: application/json" \
+    --data @"$refresh_body_file" \
+    -o "$refresh_out_file" -w '%{http_code}' 2>/dev/null) || REFRESH_HTTP="${REFRESH_HTTP:-000}"
+  # jq is not installed in this image; parse with node (empty on any failure).
+  json_field() {
+    node -e 'try{const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const v=o[process.argv[2]];if(typeof v==="string")process.stdout.write(v)}catch(e){}' "$1" "$2" 2>/dev/null || true
+  }
+  if [ "$REFRESH_HTTP" = "200" ]; then
+    FRESH_PAT=$(json_field "$refresh_out_file" token)
+  fi
+  if [ -z "$FRESH_PAT" ]; then
+    REFRESH_CODE=$(json_field "$refresh_out_file" code)
+    echo "[CONFIG] WARNING: runner token exchange failed (HTTP ${REFRESH_HTTP:-000}, code=${REFRESH_CODE:-none}); using the original token" >&2
+  fi
+  rm -f "$refresh_body_file" "$refresh_out_file"
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
-  config_env_output=$(npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
+  config_env_output=$(OSC_ACCESS_TOKEN="${FRESH_PAT:-$OSC_ACCESS_TOKEN}" npx -y @osaas/cli@latest web config-to-env ${OSC_ENV:+--env "$OSC_ENV"} "$CONFIG_SVC" 2>&1)
   config_exit=$?
   if [ $config_exit -eq 0 ]; then
     valid_exports=$(echo "$config_env_output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=")
@@ -100,6 +126,8 @@ if [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ]; then
     echo "[CONFIG] ERROR: Failed to load config (exit $config_exit): $config_env_output" >&2
   fi
 fi
+
+# END CONFIG LOAD
 
 # Install Python dependencies
 if [ -f "pyproject.toml" ]; then
