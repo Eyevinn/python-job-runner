@@ -12,7 +12,7 @@ WORK_ROOT="${WORK_ROOT:-/usercontent}"
 
 # Credentials the runner itself uses. They are removed from the environment of the
 # dependency installation and setup.sh.
-RUNNER_SECRET_VARS=(OSC_ACCESS_TOKEN GIT_TOKEN GITHUB_TOKEN)
+RUNNER_SECRET_VARS=(OSC_ACCESS_TOKEN OSC_REFRESH_TOKEN GIT_TOKEN GITHUB_TOKEN)
 
 osc_env() {
   if [[ -z "${OSC_ENV:-}" && -n "${OSC_MCP_URL:-}" ]]; then
@@ -23,19 +23,48 @@ osc_env() {
   echo "${OSC_ENV:-prod}"
 }
 
-# Exchange the runner token for a fresh one, when the platform offers it.
+# Read one string field from a JSON file; prints nothing on any failure. Uses node because
+# the exchange must not depend on jq being installed in the image.
+json_field() {
+  node -e 'try{const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const v=o[process.argv[2]];if(typeof v==="string")process.stdout.write(v)}catch(e){}' "$1" "$2" 2>/dev/null || true
+}
+
+# Exchange the runner token for a fresh 1h token (POST {"token": ...} to
+# runner-token/refresh). The result goes in FRESH_PAT, which is a plain shell variable and
+# so never reaches child processes. OSC_ACCESS_TOKEN is left as it is: the job keeps the
+# original token, and only the git credential lookup and the config load use the fresh one.
+# Every step is guarded so that set -e can never end the run here; on failure FRESH_PAT stays
+# empty and callers fall back to the original token.
 refresh_access_token() {
   [ -n "${OSC_ACCESS_TOKEN:-}" ] || return 0
   [ -z "${_TOKEN_REFRESHED:-}" ] || return 0
   _TOKEN_REFRESHED=1
-  local result token
-  result=$(curl -sf -X POST \
+  FRESH_PAT=""
+  local source_token="${OSC_REFRESH_TOKEN:-$OSC_ACCESS_TOKEN}"
+  local http="000" code="" body_file out_file
+  body_file=$(mktemp)
+  out_file=$(mktemp)
+  chmod 600 "$body_file" "$out_file"
+  printf '{"token":"%s"}' "$source_token" > "$body_file"
+  http=$(curl -s --connect-timeout 5 --max-time 10 -X POST \
     "https://token.svc.$(osc_env).osaas.io/runner-token/refresh" \
-    -H "x-pat-jwt: $OSC_ACCESS_TOKEN" 2>/dev/null) || return 0
-  token=$(echo "$result" | jq -r '.token // empty' 2>/dev/null) || return 0
-  if [ -n "$token" ]; then
-    OSC_ACCESS_TOKEN="$token"
+    -H "Content-Type: application/json" \
+    --data @"$body_file" \
+    -o "$out_file" -w '%{http_code}' 2>/dev/null) || http="${http:-000}"
+  if [ "$http" = "200" ]; then
+    FRESH_PAT=$(json_field "$out_file" token)
   fi
+  if [ -z "$FRESH_PAT" ]; then
+    code=$(json_field "$out_file" code)
+    echo "[CONFIG] WARNING: runner token exchange failed (HTTP ${http:-000}, code=${code:-none}); using the original token" >&2
+  fi
+  rm -f "$body_file" "$out_file"
+  return 0
+}
+
+# The token the runner uses for its own calls to the platform.
+runner_token() {
+  echo "${FRESH_PAT:-$OSC_ACCESS_TOKEN}"
 }
 
 # A named git credential is a workspace secret `user.gitcred.<name>`, the same credentials
@@ -55,7 +84,7 @@ resolve_git_credential() {
   body=$(mktemp)
   status=$(curl -s -o "$body" -w '%{http_code}' \
     "https://deploy.svc.$(osc_env).osaas.io/mytenantsecrets/user.gitcred.${name}" \
-    -H "x-pat-jwt: Bearer ${OSC_ACCESS_TOKEN#Bearer }") || status=000
+    -H "x-pat-jwt: Bearer $(runner_token | sed 's/^Bearer //')") || status=000
   if [ "$status" != "200" ]; then
     rm -f "$body"
     echo "Error: could not resolve git credential '$name' (HTTP $status)" >&2
@@ -169,11 +198,13 @@ install_dependencies() {
 # Load environment variables from the OSC parameter store, if one is configured.
 load_config() {
   [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ] || return 0
+  # Keep the original runner token available to the job, so it can exchange it again later.
+  export OSC_REFRESH_TOKEN="${OSC_REFRESH_TOKEN:-$OSC_ACCESS_TOKEN}"
   refresh_access_token
   local env_name output status=0 exports count
   env_name=$(osc_env)
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
-  output=$(npx -y @osaas/cli@latest web config-to-env --env "$env_name" "$CONFIG_SVC" 2>&1) || status=$?
+  output=$(OSC_ACCESS_TOKEN="$(runner_token)" npx -y @osaas/cli@latest web config-to-env --env "$env_name" "$CONFIG_SVC" 2>&1) || status=$?
   if [ $status -ne 0 ]; then
     echo "[CONFIG] ERROR: Failed to load config (exit $status): $output" >&2
     return 0

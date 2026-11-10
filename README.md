@@ -15,6 +15,7 @@ by the OSC platform (cron trigger), not inside the container.
 | `GIT_CREDENTIAL` | No | Name of a git credential registered in the OSC workspace (`user.gitcred.<name>`), used when no token is given. Needs `OSC_ACCESS_TOKEN` |
 | `CONFIG_SVC` | No | OSC config service name — exports its key/value pairs as env vars before the job runs |
 | `OSC_ACCESS_TOKEN` | No | OSC token, required when `CONFIG_SVC` or `GIT_CREDENTIAL` is set |
+| `OSC_REFRESH_TOKEN` | No | Set by the runner to the original `OSC_ACCESS_TOKEN` when `CONFIG_SVC` is set. Exchange it for a fresh 1h token by POSTing `{"token": os.environ["OSC_REFRESH_TOKEN"]}` to `https://token.svc.<env>.osaas.io/runner-token/refresh` and reading `.token`. A parameter store key with the same name overrides it. |
 | `OSC_ENV` | No | OSC environment (`prod`/`dev`); auto-detected from `OSC_MCP_URL` if unset |
 
 ## Entry point resolution
