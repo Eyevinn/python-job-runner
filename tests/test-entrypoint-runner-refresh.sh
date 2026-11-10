@@ -51,7 +51,7 @@ run_case() { # name pathdir http body curlexit
 set -e
 export PATH="$pathdir:/usr/bin:/bin"
 export ENTRYPOINT="$ENTRYPOINT"
-export OSC_ACCESS_TOKEN=original CONFIG_SVC=cfg OSC_ENV=dev
+export OSC_ACCESS_TOKEN=original CONFIG_SVC=cfg OSC_ENV=dev OSAAS_CLI_VERSION=4.35.0
 source "$ENTRYPOINT"
 load_config
 echo "BLOCK_DONE access=\$OSC_ACCESS_TOKEN refresh=\$OSC_REFRESH_TOKEN foo=\${FOO:-}"

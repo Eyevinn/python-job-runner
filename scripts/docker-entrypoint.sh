@@ -252,7 +252,7 @@ load_config() {
   local env_name output status=0 exports count
   env_name=$(osc_env)
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
-  output=$(OSC_ACCESS_TOKEN="$(runner_token)" npx -y @osaas/cli@latest web config-to-env --env "$env_name" "$CONFIG_SVC" 2>&1) || status=$?
+  output=$(OSC_ACCESS_TOKEN="$(runner_token)" npx -y "@osaas/cli@${OSAAS_CLI_VERSION:?OSAAS_CLI_VERSION must be set (pinned in the Dockerfile)}" web config-to-env --env "$env_name" "$CONFIG_SVC" 2>&1) || status=$?
   if [ $status -ne 0 ]; then
     echo "[CONFIG] ERROR: Failed to load config (exit $status): $(config_safe_output "$output")" >&2
     return 0

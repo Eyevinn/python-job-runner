@@ -90,6 +90,7 @@ run_load() { # mode -> sets RC, STDOUT, STDERR, FOO_SEEN
     _TOKEN_REFRESHED=1
     OSC_ACCESS_TOKEN=osc-access-token-literal-value
     CONFIG_SVC=svc
+    OSAAS_CLI_VERSION=4.35.0
     load_config
     echo "rc=$?"
     echo "FOO=${FOO:-unset}"
