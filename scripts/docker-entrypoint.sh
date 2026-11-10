@@ -24,7 +24,7 @@ osc_env() {
 }
 
 # Read one string field from a JSON file; prints nothing on any failure. Uses node because
-# the exchange must not depend on jq being installed in the image.
+# the image has no jq.
 json_field() {
   node -e 'try{const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const v=o[process.argv[2]];if(typeof v==="string")process.stdout.write(v)}catch(e){}' "$1" "$2" 2>/dev/null || true
 }
@@ -90,8 +90,14 @@ resolve_git_credential() {
     echo "Error: could not resolve git credential '$name' (HTTP $status)" >&2
     return 1
   fi
-  jq -r '.value // empty' "$body"
+  local value
+  value=$(json_field "$body" value)
   rm -f "$body"
+  if [ -z "$value" ]; then
+    echo "Error: git credential '$name' has no value" >&2
+    return 1
+  fi
+  echo "$value"
 }
 
 is_commit_sha() {

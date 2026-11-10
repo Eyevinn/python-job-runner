@@ -5,7 +5,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     git \
     curl \
-    jq \
     ca-certificates \
     build-essential \
     pkg-config \

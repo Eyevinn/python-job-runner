@@ -13,3 +13,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Entrypoint unit tests
         run: bash tests/entrypoint_test.sh
+      - name: Runner token refresh tests
+        run: bash tests/test-entrypoint-runner-refresh.sh

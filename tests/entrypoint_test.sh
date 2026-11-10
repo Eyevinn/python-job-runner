@@ -45,6 +45,42 @@ err=$(resolve_git_credential "Bad/Name" 2>&1 >/dev/null); check "bad credential 
 unset OSC_ACCESS_TOKEN
 err=$(resolve_git_credential "github-work" 2>&1 >/dev/null); check "credential needs access token" 1 $?
 
+# Credential lookup against a stubbed platform: curl answers the token exchange and the secret read.
+stub=$(mktemp -d)
+cat > "$stub/curl" <<'SH'
+#!/bin/bash
+out=""; url=""; hdr=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2;;
+    -H) case "$2" in x-pat-jwt:*) hdr="$2";; esac; shift 2;;
+    http*) url="$1"; shift;;
+    *) shift;;
+  esac
+done
+case "$url" in
+  */runner-token/refresh) printf '%s' '{"token":"FRESH"}' > "$out"; printf 200;;
+  */mytenantsecrets/*) echo "$hdr" > "$STUB_DIR/secret_header"; printf '%s' "${STUB_SECRET_BODY:-}" > "$out"; printf '%s' "${STUB_SECRET_HTTP:-200}";;
+esac
+SH
+chmod +x "$stub/curl"
+lookup() { # http body -> prints stdout, sets $? of the lookup
+  (
+    export STUB_DIR="$stub" STUB_SECRET_HTTP="$1" STUB_SECRET_BODY="$2"
+    export PATH="$stub:$PATH" OSC_ACCESS_TOKEN=original OSC_ENV=dev
+    unset _TOKEN_REFRESHED FRESH_PAT OSC_REFRESH_TOKEN
+    resolve_git_credential "github-work" 2>"$stub/err"
+  )
+}
+got=$(lookup 200 '{"value":"tok123"}'); check "credential lookup returns the value" "0|tok123" "$?|$got"
+check "credential lookup uses the fresh token" "x-pat-jwt: Bearer FRESH" "$(cat "$stub/secret_header")"
+got=$(lookup 200 '{"value":""}'); rc=$?; check "empty credential value is an error" "1|" "$rc|$got"
+check "empty credential value is reported" "yes" "$(grep -q "has no value" "$stub/err" && echo yes || echo no)"
+got=$(lookup 200 '{}'); check "credential without value field is an error" 1 $?
+got=$(lookup 404 '{"error":"not found"}'); rc=$?; check "unknown credential is an error" "1|" "$rc|$got"
+check "unknown credential reports the status" "yes" "$(grep -q "HTTP 404" "$stub/err" && echo yes || echo no)"
+rm -rf "$stub"
+
 # Parameter-store values are loaded after installation: setup.sh must not see them.
 work=$(mktemp -d)
 cat > "$work/setup.sh" <<'SH'
