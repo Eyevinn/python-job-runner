@@ -10,15 +10,15 @@ check() { if [ "$2" = "$3" ]; then echo "PASS: $1"; else echo "FAIL: $1 (expecte
 # Extract the config-to-env command line from the entrypoint
 line=$(grep 'npx -y "@osaas/cli@' "$root/scripts/docker-entrypoint.sh" | head -1)
 printf '#!/bin/bash\necho "NPX_ARGS: $*"\n' > "$tmp/npx"; chmod +x "$tmp/npx"
-printf '%s\n' "set -e" "CONFIG_SVC=store" "$line" 'echo "$config_env_output"' > "$tmp/block.sh"
+printf '%s\n' "set -e" "CONFIG_SVC=store" "env_name=prod" "status=0" 'runner_token() { echo tok; }' "$line" 'echo "$output"' > "$tmp/block.sh"
 
 # Passing path: pinned spec is used
 out=$(env -i PATH="$tmp:$PATH" OSAAS_CLI_VERSION=4.35.0 bash "$tmp/block.sh" 2>&1)
 check "npx uses pinned spec" "$(echo "$out" | grep -c 'NPX_ARGS: -y @osaas/cli@4.35.0 web config-to-env')" "1"
 
-# Failing path: unset version aborts and never calls npx
+# Failing path: unset version is reported and never calls npx
 out=$(env -i PATH="$tmp:$PATH" bash "$tmp/block.sh" 2>&1); rc=$?
-check "unset version fails" "$([ $rc -ne 0 ] && echo yes)" "yes"
+check "unset version reports the missing pin" "$(echo "$out" | grep -c 'OSAAS_CLI_VERSION must be set')" "1"
 check "unset version never runs npx" "$(echo "$out" | grep -c NPX_ARGS)" "0"
 
 # No floating tag, and the version is pinned in exactly one place

@@ -1,0 +1,17 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Entrypoint unit tests
+        run: bash tests/entrypoint_test.sh
+      - name: Runner token refresh tests
+        run: bash tests/test-entrypoint-runner-refresh.sh
