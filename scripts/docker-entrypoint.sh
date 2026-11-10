@@ -201,6 +201,48 @@ install_dependencies() {
   fi
 }
 
+# Print config-to-env output with every `export KEY='value'` statement removed, so decrypted
+# parameter values never reach the pod log. The CLI writes each value in single quotes with
+# every ' as '\'' and does not validate keys; a multi-line value is removed whole. When the
+# value boundary is unknowable (unclosed quote, odd key, unexpected text after a closing
+# quote) the rest of the output is withheld. Known tokens and token shapes are masked too.
+# The result is a single line.
+config_safe_output() {
+  local out _n _v
+  out=$(printf '%s\n' "$1" | awk '
+    function scan(s, from,   i, n, c) {
+      n = length(s)
+      for (i = from; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (q) { if (c == "\047") q = 0 }
+        else if (c == "\\" && substr(s, i + 1, 2) == "\047\047") { q = 1; i += 2 }
+        else { dead = 1; return }
+      }
+    }
+    function mark() { if (!m) print "[parameter output withheld]"; m = 1 }
+    BEGIN { q = 0; dead = 0; m = 0 }
+    {
+      if (dead) { next }
+      if (q) { scan($0, 1); next }
+      if ($0 !~ /^export /) { m = 0; print; next }
+      mark()
+      p = index($0, "=\047")
+      if (p == 0) { dead = 1; next }
+      key = substr($0, 8, p - 8)
+      if (key ~ /[\047"\\]/) { dead = 1; next }
+      q = 1
+      scan($0, p + 2)
+    }')
+  for _n in OSC_ACCESS_TOKEN OSC_REFRESH_TOKEN FRESH_PAT GIT_TOKEN GITHUB_TOKEN; do
+    _v="${!_n:-}"
+    if [ -n "$_v" ]; then out="${out//"$_v"/[REDACTED]}"; fi
+  done
+  printf '%s' "$out" | sed -E \
+    -e 's/gh[pso]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/[REDACTED]/g' \
+    -e 's/([Bb]asic )[A-Za-z0-9+\/=]{8,}/\1[REDACTED]/g' | tr '\n' ' ' | sed -e 's/ *$//'
+}
+
 # Load environment variables from the OSC parameter store, if one is configured.
 load_config() {
   [ -n "${OSC_ACCESS_TOKEN:-}" ] && [ -n "${CONFIG_SVC:-}" ] || return 0
@@ -212,7 +254,7 @@ load_config() {
   echo "[CONFIG] Loading environment variables from config service '$CONFIG_SVC'"
   output=$(OSC_ACCESS_TOKEN="$(runner_token)" npx -y @osaas/cli@latest web config-to-env --env "$env_name" "$CONFIG_SVC" 2>&1) || status=$?
   if [ $status -ne 0 ]; then
-    echo "[CONFIG] ERROR: Failed to load config (exit $status): $output" >&2
+    echo "[CONFIG] ERROR: Failed to load config (exit $status): $(config_safe_output "$output")" >&2
     return 0
   fi
   exports=$(echo "$output" | grep "^export [A-Za-z_][A-Za-z0-9_]*=" || true)
