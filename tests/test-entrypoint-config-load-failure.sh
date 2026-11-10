@@ -75,6 +75,10 @@ if [ "${STUB_MODE:-fail}" = "fail" ]; then
   echo "Cannot read properties of null (reading 'replace')"
   exit 3
 fi
+if [ "${STUB_MODE:-fail}" = "empty" ]; then
+  echo "npm notice something"
+  exit 0
+fi
 echo "export FOO='bar'"
 exit 0
 EOF
@@ -105,6 +109,11 @@ run_load ok
 present "success reports loaded count" "$STDOUT" "[CONFIG] Loaded 1 environment variable(s)"
 present "success exports FOO" "$STDOUT" "FOO=bar"
 absent "success prints no value in the log lines" "$(grep '^\[CONFIG\]' "$WORK/stdout")" "bar"
+
+run_load empty
+present "empty store warns" "$STDERR" "[CONFIG] WARNING: config service 'svc' returned no export lines"
+present "empty store lets the job continue" "$STDOUT" "rc=0"
+present "empty store exports nothing" "$STDOUT" "FOO=unset"
 
 # Case 4: wiring guard, the error line goes through the helper.
 line=$(declare -f load_config | grep '\[CONFIG\] ERROR')
