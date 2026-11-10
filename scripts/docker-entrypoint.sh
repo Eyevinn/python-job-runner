@@ -262,6 +262,8 @@ load_config() {
     eval "$exports"
     count=$(echo "$exports" | wc -l | tr -d ' ')
     echo "[CONFIG] Loaded $count environment variable(s)"
+  else
+    echo "[CONFIG] WARNING: config service '$CONFIG_SVC' returned no export lines" >&2
   fi
 }
 
