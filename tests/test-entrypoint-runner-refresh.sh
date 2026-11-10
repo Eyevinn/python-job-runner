@@ -1,16 +1,13 @@
 #!/bin/bash
 # Tests the runner-token refresh exchange in scripts/docker-entrypoint.sh.
-# Extracts the "# BEGIN CONFIG LOAD" .. "# END CONFIG LOAD" block and runs it
-# under set -e with stubbed curl/npx/node.
+# Sources the entrypoint (which only defines functions) and runs load_config under set -e
+# with stubbed curl/npx/node.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENTRYPOINT="$ROOT/scripts/docker-entrypoint.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 FAILS=0
-
-awk '/^# BEGIN CONFIG LOAD/{f=1;next}/^# END CONFIG LOAD/{f=0}f' "$ENTRYPOINT" > "$WORK/block.sh"
-[ -s "$WORK/block.sh" ] || { echo "FAIL: config load block not found"; exit 1; }
 
 mkdir -p "$WORK/bin"
 # curl stub: honours -o and -w '%{http_code}'; records the request body file.
@@ -25,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$data" ] && cp "$data" "$STUB_DIR/request_body"
-[ -n "$data" ] && stat -c %a "$data" > "$STUB_DIR/body_mode"
+[ -n "$data" ] && { stat -c %a "$data" 2>/dev/null || stat -f %Lp "$data"; } > "$STUB_DIR/body_mode"
 [ "${STUB_CURL_EXIT:-0}" != "0" ] && exit "$STUB_CURL_EXIT"
 printf '%s' "${STUB_BODY:-}" > "$out"
 printf '%s' "${STUB_HTTP:-200}"
@@ -53,9 +50,13 @@ run_case() { # name pathdir http body curlexit
   cat > "$WORK/run_$name.sh" <<EOF
 set -e
 export PATH="$pathdir:/usr/bin:/bin"
+export ENTRYPOINT="$ENTRYPOINT"
 export OSC_ACCESS_TOKEN=original CONFIG_SVC=cfg OSC_ENV=dev
-source "$WORK/block.sh"
+source "$ENTRYPOINT"
+load_config
 echo "BLOCK_DONE access=\$OSC_ACCESS_TOKEN refresh=\$OSC_REFRESH_TOKEN foo=\${FOO:-}"
+# The install stage runs without the runner credentials: the refresh token must be removed too.
+echo "INSTALL_ENV=\$(without_secrets env | grep -cE '^(OSC_ACCESS_TOKEN|OSC_REFRESH_TOKEN)=' || true)"
 EOF
   bash "$WORK/run_$name.sh" > "$WORK/out_$name" 2> "$WORK/err_$name"
   echo $? > "$WORK/exit_$name"
@@ -76,6 +77,7 @@ check ok "body is JSON with token" "$([ "$(cat "$WORK/s_ok/request_body")" = '{"
 check ok "body file mode 600" "$([ "$(cat "$WORK/s_ok/body_mode")" = 600 ]; echo $?)"
 check ok "no warning" "$(! contains "$WORK/err_ok" WARNING; echo $?)"
 check ok "env from config applied" "$(contains "$WORK/out_ok" 'foo=bar'; echo $?)"
+check ok "install stage sees no runner tokens" "$(contains "$WORK/out_ok" 'INSTALL_ENV=0'; echo $?)"
 
 # Failure paths: warning, original token used, block continues
 fail_case() { # name http body curlexit expected-substring
